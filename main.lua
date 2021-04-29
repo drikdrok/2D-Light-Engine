@@ -1,20 +1,12 @@
-local rectangles = {}
-
-local mouseDown = false
-local newSize = 16
-
+math.randomseed(os.time())
 local shader = [[
-
-	#define NUM_LIGHTS 32
-
 	struct Light {
 		vec2 position;
 		vec3 diffuse;
 		float power;
 	};
 
-	extern Light lights[NUM_LIGHTS];
-	extern int num_lights;
+	extern Light light;
 
 	extern vec2 screenSize;
 
@@ -31,29 +23,23 @@ local shader = [[
 		vec2 normScreen = screenCoords / screenSize;
 		vec3 diffuse = vec3(0);
 
-		for (int i = 0; i < num_lights; i++){
-			Light light = lights[i];
-			vec2 normPos = light.position / screenSize;
+		vec2 normPos = light.position / screenSize;
+		float distance = length(normPos - normScreen) * light.power;
+		float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
 
-			float distance = length(normPos - normScreen) * light.power;
-			float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
-
-			diffuse += light.diffuse * attenuation;
-		}
-
+		diffuse += light.diffuse * attenuation;
 		diffuse = clamp(diffuse, 0.0, 1.0);
-
+		
 		vec4 lightPixel = Texel(lightMap, normScreen);
-
-		if (lightPixel[0] == 1.0){
-			return pixel * vec4(diffuse, 1.0);
+		
+		if (lightPixel[0] > 0) { // Pixel is lit by light
+			return pixel * vec4(diffuse, 1);
 		}else{
-			return vec4(0.0, 0.0, 0.0, 0.0);
+			return vec4(0,0,0,0);
 		}
 	}
 
 ]]
-
 
 
 
@@ -70,8 +56,17 @@ function love.load()
 
 	visibillityPolygon = {}
 
+	mouseDown = false
 
-	lightMap = love.graphics.newCanvas(800, 600)
+	
+	lightMaps ={}
+	
+	showRays = false
+	showRayCanvas = love.graphics.newCanvas(800, 600)
+	
+	lights = {}
+	newLight(100, 100, {1, 1, 1}, 32)
+
 end
 
 function love.update(dt)
@@ -102,90 +97,127 @@ function love.update(dt)
 		mouseDown = false
 	end
 
+	lights[1][1] =  {love.mouse.getX(), love.mouse.getY()}
 
-	calculateVisibillityPolygon(mouseX, mouseY, 1000)
+	generateLightMap()
 end
 
 function love.draw()
-
-	local mouseX, mouseY = love.mouse.getPosition()
-
-	love.graphics.setCanvas(lightMap)
-	love.graphics.clear()
-	love.graphics.setColor(1,0,0)
-	if #visibillityPolygon > 0 then 
-		for i = 1, #visibillityPolygon-1 do
-			--error( mouseX.. ", ".. mouseY.. "; "..visibillityPolygon[i][1].. ", ".. visibillityPolygon[i][2].. "; ".. visibillityPolygon[i+1][1].. ", ".. visibillityPolygon[i+1][2])
-			love.graphics.polygon("fill", mouseX, mouseY, visibillityPolygon[i][1], visibillityPolygon[i][2], visibillityPolygon[i+1][1], visibillityPolygon[i+1][2])
-		end
-		love.graphics.polygon("fill", mouseX, mouseY, visibillityPolygon[#visibillityPolygon][1], visibillityPolygon[#visibillityPolygon][2], visibillityPolygon[1][1], visibillityPolygon[1][2])
-	end
-	love.graphics.setCanvas()
-
-
-	love.graphics.setShader(shader)
-
-	shader:send("screenSize", {love.graphics.getWidth(), love.graphics.getHeight()})
-	shader:send("num_lights", 2)
+	local worldCanvas = love.graphics.newCanvas(800, 600)
+	love.graphics.setCanvas(worldCanvas) -- Draw everything in the world
 	
-	shader:send("lights[0].position", {love.mouse.getX(), love.mouse.getY()})
-	shader:send("lights[0].diffuse", {1.0, 1.0, 1.0})
-	shader:send("lights[0].power", 32)
-
-
-	shader:send("lights[1].position", {150, 150})
-	shader:send("lights[1].diffuse", {0.0, 1.0, 1.0})
-	shader:send("lights[1].power", 32)
-
-	shader:send("lightMap", lightMap)
-
-	love.graphics.setColor(0,0,0)
+	love.graphics.setColor(1,1,1)
 	love.graphics.rectangle("fill", 0, 0, 800, 600)
 	love.graphics.setColor(1,1,1)
 
-
-	--[[for i,v in pairs(rectangles) do
-		love.graphics.rectangle("fill", v.x, v.y, v.width, v.height)
-	end
-	--]]
-	for i,v in pairs(edges) do
-		love.graphics.line(v.x, v.y, v.endX, v.endY)
-	end
 	
-	
-	
-
-	for i,v in pairs(visibillityPolygon) do
-		--love.graphics.line(mouseX, mouseY, v[1], v[2])
-	end
-
-	--[[
-	for i,v in pairs(edges) do
-		love.graphics.circle("fill", v.x, v.y, 3)
-		love.graphics.circle("fill", v.endX, v.endY, 3)
-	end
-	for i,v in pairs(visibillityPolygon) do
-		love.graphics.circle("fill", v[1], v[2], 3)
-		love.graphics.circle("fill", v[1], v[2], 3)
-	end--]]
 	love.graphics.draw(img, 500, 200)
 
+	love.graphics.setCanvas()
+
+
+	
+	--Apply light shader for every light and combine images additively
+	love.graphics.setBlendMode("add")
+	love.graphics.setShader(shader)
+	shader:send("screenSize", {love.graphics.getWidth(), love.graphics.getHeight()})
+	for i, light in pairs(lights) do
+
+		shader:send("lightMap", lightMaps[i])
+		
+		shader:send("light.position", light[1])
+		shader:send("light.diffuse", light[2])
+		shader:send("light.power", light[3])
+
+		love.graphics.draw(worldCanvas)
+
+	end
 	love.graphics.setShader()
 
+	if showRays then 
+		love.graphics.draw(showRayCanvas)
+	end
+	
+	
+	love.graphics.setBlendMode("alpha")
 
 
-
+	--Text
+	love.graphics.setColor(1,1,1)
+	love.graphics.print("FPS: "..love.timer.getFPS(), 730)
+	love.graphics.print("F1 To toggle rays", 0, 0)
+	love.graphics.print("Right click to place light", 0, 15)
+	love.graphics.print("Left click to place box", 0, 30)
+	love.graphics.print("R to reset", 0, 45)
 	
 end
 
 function love.keypressed(key)
 	if key == "escape" then 
 		love.event.quit()
+	elseif key == "f1" then 
+		showRays = not showRays 
+	elseif key == "r" then 
+		edges = {
+			{x = 0, y = 0, endX = 800, endY = 0},
+			{x = 0, y = 0, endX = 0, endY = 600},
+			{x = 0, y = 600, endX = 800, endY = 600},
+			{x = 800, y = 0, endX = 800, endY = 600}
+		}
+
+	lights = {}
+	newLight(100, 100, {1, 1, 1}, 32)
+
 	end	
 end
 
+function love.mousepressed(x, y, button)
+	if button == 2 then 
+		newLight(x, y, {math.random(0, 1), math.random(0, 1), math.random(0, 1), }, 32)
+	end
+end
 
-function calculateVisibillityPolygon(sourceX, sourceY, radius)
+function generateLightMap()
+	for i,v in pairs(lights) do
+		love.graphics.setCanvas(lightMaps[i])
+		love.graphics.clear()
+		calculateVisibillityPolygon(v[1][1], v[1][2])
+
+
+		love.graphics.setColor(1,0,0, 1)
+		if #visibillityPolygon > 0 then 
+			for i = 1, #visibillityPolygon-1 do
+				love.graphics.polygon("fill", v[1][1], v[1][2], visibillityPolygon[i][1], visibillityPolygon[i][2], visibillityPolygon[i+1][1], visibillityPolygon[i+1][2])
+			end
+			love.graphics.polygon("fill", v[1][1], v[1][2], visibillityPolygon[#visibillityPolygon][1], visibillityPolygon[#visibillityPolygon][2], visibillityPolygon[1][1], visibillityPolygon[1][2])
+		end
+		love.graphics.setCanvas()
+
+
+		if showRays and i == 1 then -- Show the rays being cast from the mouse light
+			local mouseX, mouseY = love.mouse.getPosition()
+			love.graphics.setCanvas(showRayCanvas)
+				love.graphics.clear()
+				love.graphics.setColor(1,1,1)
+				for i,v in pairs(visibillityPolygon) do
+					love.graphics.line(mouseX, mouseY, v[1], v[2])
+				end
+			
+				for i,v in pairs(edges) do
+					love.graphics.circle("fill", v.x, v.y, 3)
+					love.graphics.circle("fill", v.endX, v.endY, 3)
+				end
+				for i,v in pairs(visibillityPolygon) do
+					love.graphics.circle("fill", v[1], v[2], 3)
+					love.graphics.circle("fill", v[1], v[2], 3)
+				end
+			love.graphics.setCanvas()
+		end
+	end
+end
+
+
+function calculateVisibillityPolygon(sourceX, sourceY)
 	visibillityPolygon = {}
 
 	for i, edge1 in pairs(edges) do -- Loop through every edge
@@ -200,13 +232,17 @@ function calculateVisibillityPolygon(sourceX, sourceY, radius)
 				local baseAngle = math.atan2(rayVectorY, rayVectorX);
 
 				local angle = 0
-				for k = 0, 3 do 
-					if k == 0 then angle = baseAngle - 0.0001 end
-					if k == 1 then angle = baseAngle 		   end
-					if k == 2 then angle = baseAngle + 0.0001 end
+				for k = 0, 3 do -- Cast 3 rays with slightly different angles. This is so rays can go past edges
+					if k == 0 then 
+						angle = baseAngle - 0.0001 
+					elseif k == 1 then 
+						angle = baseAngle 		   
+					elseif k == 2 then 
+						angle = baseAngle + 0.0001 
+					end
 
-					rayVectorX = radius * math.cos(angle)
-					rayVectorY = radius * math.sin(angle)
+					rayVectorX = math.cos(angle)
+					rayVectorY = math.sin(angle)
 
 					local closest_t1 = 99999999
 					local closestPointX = 0
@@ -215,15 +251,17 @@ function calculateVisibillityPolygon(sourceX, sourceY, radius)
 					local isValid = false
 
 					for l, edge2 in pairs(edges) do
-						local sdx = edge2.endX - edge2.x
-						local sdy = edge2.endY - edge2.y
+						local segmentVectorX = edge2.endX - edge2.x
+						local segmentVectorY = edge2.endY - edge2.y
 
-						if math.abs(sdx - rayVectorX) > 0.0 and math.abs(sdy - rayVectorY) > 0.0 then -- Make sure vectors are not parralel
-							local t2 = (rayVectorX * (edge2.y - sourceY) + (rayVectorY * (sourceX - edge2.x))) / (sdx * rayVectorY - sdy * rayVectorX)
-							local t1 = (edge2.x + sdx * t2 - sourceX) / rayVectorX
+						if math.abs(segmentVectorX - rayVectorX) > 0.0 and math.abs(segmentVectorY - rayVectorY) > 0.0 then -- Make sure vectors are not parralel
+							
+							local t2 = (rayVectorX * (edge2.y - sourceY) + (rayVectorY * (sourceX - edge2.x))) / (segmentVectorX * rayVectorY - segmentVectorY * rayVectorX)
+							
+							local t1 = (edge2.x + segmentVectorX * t2 - sourceX) / rayVectorX -- Distance from light to edge
 
-							if (t1 > 0 and t2 >= 0 and t2 <= 1.0) then -- Intersect point is valid
-								if (t1 < closest_t1) then 
+							if t1 > 0 and t2 >= 0 and t2 <= 1.0 then -- Intersect point is valid
+								if t1 < closest_t1 then 
 									closest_t1 = t1
 									closestPointX = sourceX + rayVectorX * t1
 									closestPointY = sourceY + rayVectorY * t1
@@ -241,4 +279,10 @@ function calculateVisibillityPolygon(sourceX, sourceY, radius)
 			end
 		end
 	table.sort(visibillityPolygon, function(a, b) return a[3] < b[3] end ) -- Sort points by angle
+end
+
+
+function newLight(x, y, color, power)
+	table.insert(lights, {{x,y}, color, power})
+	table.insert(lightMaps, love.graphics.newCanvas(800, 600))
 end
