@@ -2,17 +2,13 @@ math.randomseed(os.time())
 local shader = [[
 	struct Light {
 		vec2 position;
-		vec3 diffuse;
-		float power;
+		vec3 color; 
+		float intensity;
 	};
 
 	extern Light light;
 
 	extern vec2 screenSize;
-
-	const float constant = 1.0;
-	const float linear = 0.09;
-	const float quadratic = 0.032;
 
 	extern Image lightMap;
 	
@@ -21,19 +17,20 @@ local shader = [[
 		vec4 pixel = Texel(image, uvs);
 
 		vec2 normScreen = screenCoords / screenSize;
-		vec3 diffuse = vec3(0);
-
 		vec2 normPos = light.position / screenSize;
-		float distance = length(normPos - normScreen) * light.power;
-		float attenuation = 1.0 / (constant + linear * distance + quadratic * (distance * distance));
+		
+		float distance = length(normPos - normScreen) * light.intensity;
+		
+		float brightness = 1.0 / (1.0 + 0.1 * distance + 0.032 * (distance * distance));
+		
+		vec3 lightColor = light.color * brightness;
 
-		diffuse += light.diffuse * attenuation;
-		diffuse = clamp(diffuse, 0.0, 1.0);
+		lightColor = clamp(lightColor, 0.0, 1.0);
 		
 		vec4 lightPixel = Texel(lightMap, normScreen);
 		
 		if (lightPixel[0] > 0) { // Pixel is lit by light
-			return pixel * vec4(diffuse, 1);
+			return pixel * vec4(lightColor, 1);
 		}else{
 			return vec4(0,0,0,0);
 		}
@@ -59,7 +56,7 @@ function love.load()
 	mouseDown = false
 
 	
-	lightMaps ={}
+	lightMaps = {}
 	
 	showRays = false
 	showRayCanvas = love.graphics.newCanvas(800, 600)
@@ -126,8 +123,8 @@ function love.draw()
 		shader:send("lightMap", lightMaps[i])
 		
 		shader:send("light.position", light[1])
-		shader:send("light.diffuse", light[2])
-		shader:send("light.power", light[3])
+		shader:send("light.color", light[2])
+		shader:send("light.intensity", light[3])
 
 		love.graphics.draw(worldCanvas)
 
