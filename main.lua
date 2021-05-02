@@ -7,19 +7,16 @@ local shader = [[
 	};
 
 	extern Light light;
-
 	extern vec2 screenSize;
-
 	extern Image lightMap;
 	
-	vec4 effect(vec4 color, Image image, vec2 uvs, vec2 screenCoords){
+	vec4 effect(vec4 color, Image image, vec2 textureCoords, vec2 screenCoords){
 
-		vec4 pixel = Texel(image, uvs);
+		vec4 pixel = Texel(image, textureCoords);
 
-		vec2 normScreen = screenCoords / screenSize;
 		vec2 normPos = light.position / screenSize;
 		
-		float distance = length(normPos - normScreen) * light.intensity;
+		float distance = length(normPos - textureCoords) / light.intensity;
 		
 		float brightness = 1.0 / (1.0 + 0.1 * distance + 0.032 * (distance * distance));
 		
@@ -27,7 +24,7 @@ local shader = [[
 
 		lightColor = clamp(lightColor, 0.0, 1.0);
 		
-		vec4 lightPixel = Texel(lightMap, normScreen);
+		vec4 lightPixel = Texel(lightMap, textureCoords);
 		
 		if (lightPixel[0] > 0) { // Pixel is lit by light
 			return pixel * vec4(lightColor, 1);
@@ -60,9 +57,11 @@ function love.load()
 	
 	showRays = false
 	showRayCanvas = love.graphics.newCanvas(800, 600)
+
+	lightIntensity = 0.025
 	
 	lights = {}
-	newLight(100, 100, {1, 1, 1}, 32)
+	newLight(100, 100, {1, 1, 1}, lightIntensity)
 
 end
 
@@ -163,16 +162,17 @@ function love.keypressed(key)
 		}
 
 	lights = {}
-	newLight(100, 100, {1, 1, 1}, 32)
+	newLight(100, 100, {1, 1, 1}, lightIntensity)
 
 	end	
 end
 
 function love.mousepressed(x, y, button)
 	if button == 2 then 
-		newLight(x, y, {math.random(0, 1), math.random(0, 1), math.random(0, 1), }, 32)
+		newLight(x, y, {math.random(0, 1), math.random(0, 1), math.random(0, 1), }, lightIntensity)
 	end
 end
+
 
 function generateLightMap()
 	for i,v in pairs(lights) do
@@ -253,7 +253,7 @@ function calculateVisibillityPolygon(sourceX, sourceY)
 
 						if math.abs(segmentVectorX - rayVectorX) > 0.0 and math.abs(segmentVectorY - rayVectorY) > 0.0 then -- Make sure vectors are not parralel
 							
-							local t2 = (rayVectorX * (edge2.y - sourceY) + (rayVectorY * (sourceX - edge2.x))) / (segmentVectorX * rayVectorY - segmentVectorY * rayVectorX)
+							local t2 = (rayVectorX * (edge2.y - sourceY) + (rayVectorY * (sourceX - edge2.x))) / (segmentVectorX * rayVectorY - segmentVectorY * rayVectorX) -- Where on segment there is intersection
 							
 							local t1 = (edge2.x + segmentVectorX * t2 - sourceX) / rayVectorX -- Distance from light to edge
 
